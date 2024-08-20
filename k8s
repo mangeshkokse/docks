@@ -1,0 +1,278 @@
+################################## Kubernets ################################
+
+1) What is Kubernets what does it do?
+=> - Kubernetes, often abbreviated as K8s, is an open-source platform designed for automating the deployment, scaling, and management of containerized applications. Containers allow you to package your applications with all the dependencies they need to run consistently across different environments, and Kubernetes helps orchestrate these containers across a cluster of machines.
+
+2) How are Kubernetes and Docker linked?
+=> Kubernetes and Docker are closely related but serve different purposes in the container ecosystem.
+ - Docker is a platform that allows you to create, deploy, and run applications in containers. Containers are lightweight, portable units that package an application and its dependencies together, ensuring that it runs consistently across different environments, from development to production.
+
+- Kubernetes is an orchestration platform that manages containers at scale. While Docker handles the creation and execution of containers, Kubernetes manages how and where these containers run across a cluster of machines.
+
+3) https://www.simplilearn.com/tutorials/kubernetes-tutorial/kubernetes-interview-questions
+
+4) Kubernetes Control-Plane Components (Artitecture)
+- 1) master or control node
+  2) worker node
+1) master or control node
+- API Server
+- etcd
+- Controller Manager
+- Scheduler
+2) WORKER NODES - They are responsible for running containers and executing the actual workloads of your applications.
+- Kubelet
+- Kube Proxy
+- Container Runtime - Image Management, Container Lifecycle Management, Resource Isolation, Networking
+- Container Storage Interfaces (CSI)
+eg - Docker Engine, CRI-O: A lightweight container runtime specifically designed to be Kubernetes' container runtime interface (CRI) implementation.,
+- Container Storage Interfaces (CSI) - API designed to allow container orchestration systems like Kubernetes to interact with various storage solutions.
+eg - CSI Drivers, CSI Controller, CSI Node Plugin, 
+eg - Amazon EBS CSI Driver , NFS CSI Driver
+-  PODS - Pod is the smallest and most basic deployable unit. A Pod represents a single instance of a running process in your cluster. Pods encapsulate one or more containers (such as Docker containers), storage resources, a unique network IP, and options that govern how the containers should run. Pods are used to deploy applications and are managed by higher-level objects like Deployments, StatefulSets, and DaemonSets.
+- Sidecar Container is a helper container that runs alongside the main container in the same Pod. Think of it as a companion or assistant to the main container. They work together, but each has a specific role.
+eg. Logging Sidecar, Monitoring Sidecar, Proxy Sidecar.
+
+5) What is a ReplicaSet in Kubernetes, and what problem does it solve?
+- A ReplicaSet is like a supervisor for your application in Kubernetes. It ensures that a specified number of identical copies (replicas) of your application are always running. This solves the problem of keeping your application available and reliable even if some parts of it fail.
+
+6) How does a ReplicaSet differ from a Deployment, and in what scenarios would you use one over the other?
+- A ReplicaSet is a simpler tool that just ensures a specific number of replicas are running. A Deployment is more advanced and can do rolling updates and rollbacks. You’d use a Deployment when you need to update your app without downtime or quickly revert to a previous version.
+
+7)  What is the purpose of the 'selector' field in a ReplicaSet specification?
+- The ‘selector’ field tells the ReplicaSet which Pods to manage. It’s like a filter that selects Pods based on their labels, so the ReplicaSet knows which Pods to control.
+
+8) How do you scale the number of replicas managed by a ReplicaSet?
+- You change the number in the ‘replica’ field in the ReplicaSet’s instructions. If you want more replicas, you increase the number; if you want fewer, you decrease it.
+
+9) Explain the concept of ‘Pod template’ in the context of a ReplicaSet.
+- The Pod template is like a blueprint for the Pods managed by the ReplicaSet. It defines what each replica looks like, such as which container images to use, resource limits, and more
+
+10) What happens when a ReplicaSet's 'replicas' field is set to a value less than the current number of Pods?
+- If you set ‘replicas’ to a number lower than the current number of Pods, the ReplicaSet will notice the extra Pods and gradually remove them, keeping only the specified number.
+
+11) Can you manually delete Pods managed by a ReplicaSet, and if so, what happens?
+- Yes, you can manually delete Pods. However, the ReplicaSet will notice and create new Pods to replace the deleted ones to maintain the desired number of replicas.
+
+12) How do you update the Pod template for an existing ReplicaSet?
+- To update the Pod template, you need to create a new ReplicaSet with the changes you want. Kubernetes will then gradually replace the old Pods with the new ones from the updated ReplicaSet
+- Updating the Pod template for an existing ReplicaSet directly is not recommended and is generally not supported in Kubernetes because ReplicaSets are designed to maintain the state of Pods as specified at the time of creation. If you modify the Pod template directly, Kubernetes won't automatically replace the existing Pods with new ones based on the updated template.
+
+Instead, the recommended approach is to use a Deployment to manage your ReplicaSets. Deployments provide a higher-level abstraction that allows you to update your Pods declaratively and manage rolling updates.
+- Ensure You’re Using a Deployment:
+- Update the Pod Template in the Deployment:
+- Kubernetes Handles the Rest: like with rolling update 
+
+- monitor the progress of the update
+# kubectl rollout status deployment my-deployment
+
+13) What is the significance of the ‘matchLabels’ field in a ReplicaSet selector?
+- ‘matchLabels’ specifies which Pods the ReplicaSet should manage based on their labels. It’s like a tag system that helps the ReplicaSet find the right Pods to control.
+
+14) How can you ensure that a specific version of your application is maintained by a ReplicaSet?
+- By specifying the desired version in the Pod template, the ReplicaSet will ensure that all its replicas use that version. When you update the template, it’ll use the new version.
+
+15) What is the difference between a ReplicaSet and a DaemonSet in Kubernetes?
+- A ReplicaSet manages a specified number of replicas for a generic application. A DaemonSet, on the other hand, ensures that a copy of your app runs on every node in the cluster.
+
+16) What happens if you delete a ReplicaSet? Do the associated Pods get deleted as well?
+- If you delete a ReplicaSet, by default, the associated Pods will also be deleted. This is because the ReplicaSet manages those Pods.
+----------------------------------------------
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: frontend
+  labels:
+    app: guestbook
+    tier: frontend
+spec:
+  # modify replicas according to your case
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        tier: frontend
+    spec:
+      containers:
+      - name: php-redis
+        image: gcr.io/google_samples/gb-frontend:v3
+---------------------------------------------------
+17) What is Namespace 
+- It is an logical isolation
+- use case - Logical Grouping, Resource Isolation, Resource Quotas,
+
+18) different default NameSpace.
+-When you provision a Kubernetes cluster it will create a different namespace to hold the default set of Pods, Services, and Deployments used by the cluster.
+1) kube-system: It would contain pods like kube-dns, kube-proxy, kube-API, and others controllers.
+2) kube-public: Used for public resources and readable by all users (including those not authenticated).
+               - It contains the configmap that has cluster information.
+3) kube-node-lease: - It determines node availability. kube-node-lease is a special namespace in Kubernetes used to track the health of the nodes in the cluster.
+
+18) what is Kubernetes Resource Quota.
+- A Resource Quota in Kubernetes is a way to limit the amount of resources (like CPU, memory, and the number of objects) that a particular namespace can use. It helps ensure that no single team, project, or application can consume more than its fair share of resources within a shared cluster, thereby promoting balanced resource allocation and preventing resource starvation.
+-------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: example-quota
+  namespace: my-namespace
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "4"
+    requests.memory: "10Gi"
+    limits.cpu: "8"
+    limits.memory: "20Gi"
+------------------------------------
+19) what is Kubernetes Service.
+- A Kubernetes Service is an abstraction that defines a logical set of Pods and a policy by which to access them.
+- It provide static ip to pod 
+- Services enable network access to a set of Pods running in the cluster, ensuring that the applications running inside Pods are discoverable and can communicate with each other or external users, regardless of the specific Pods' lifecycles (e.g., when Pods are created, deleted, or restarted).
+1) ClusterIP (Default) - Exposes the Service on a cluster-internal IP. Other resources within the same cluster can access the Service, but it is not accessible from outside the cluster.
+2) NodePort: - Exposes the Service on a specific port on each node in the cluster. External traffic can reach the Service by sending requests to the node's IP address on the specified port.
+3) LoadBalancer - Works with cloud providers to create an external load balancer that routes traffic to the Service, making it accessible from outside the cluster.
+4) ExternalName - Maps the Service to a DNS name, redirecting traffic to an external service outside the cluster.
+
+20) what is Selectors.
+- Services use labels and selectors to identify the Pods that should receive the traffic. For example, if your Pods have a label app: my-app, you can create a Service that routes traffic to any Pod with that label.
+
+21) what is Headless Services.
+- By setting the ClusterIP of a Service to None, you create a "headless" Service that does not allocate a ClusterIP. This allows you to manage your own service discovery mechanism, often used with StatefulSets for cases where you need direct access to individual Pods.
+--------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  selector:
+    app: my-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+---------------------------------------
+
+22) Manual Scheduling in Kubernetes.
+- Manual scheduling in Kubernetes refers to the process of explicitly specifying which node a Pod should run on, bypassing the automatic scheduling mechanism that Kubernetes normally uses. Normally, the Kubernetes scheduler automatically selects a node for a Pod based on resource availability and other factors. However, in some cases, you may want to manually control where a Pod is placed.
+- Manual scheduling can be useful in scenarios where:
+
+You have specific hardware requirements (e.g., GPU nodes).
+You want to control Pod placement for testing or debugging purposes.
+You need to temporarily override the scheduler’s decisions for a specific reason.
+
+23) Taints and Toleration Kubernetes.
+- Taints and Tolerations in Kubernetes are mechanisms that allow you to control how Pods are scheduled onto nodes, by either repelling or allowing Pods to be scheduled based on specific conditions. They provide a way to ensure that certain Pods only run on specific nodes, or to prevent certain nodes from accepting any Pods that don't explicitly tolerate the node's conditions.
+- Taints: Applied to a node, a taint marks the node as having some special property or condition that could cause Pods to avoid being scheduled there unless they explicitly indicate they can tolerate the condition.
+- Tolerations: Applied to Pods, tolerations specify that the Pod can run on nodes with certain taints. A Pod that tolerates a taint is allowed to be scheduled on the node with that taint.
+---------------------------------------------------------
+# kubectl taint nodes node1 key=value:NoSchedule
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+spec:
+  tolerations:
+  - key: "key"
+    operator: "Equal"
+    value: "value"
+    effect: "NoSchedule"
+  containers:
+  - name: my-container
+    image: nginx
+----------------------------------------------------------
+
+24) What Are Labels?
+- Key-Value Pairs: Labels are simply pairs of keys and values, such as environment=production or app=web.
+- Attached to Objects: You can attach labels to any Kubernetes object (like a Pod or a Node) when you create it or later on.
+- Flexible: Labels can be anything you want. There are no predefined labels, so you can use whatever makes sense for your organizational needs.
+
+25) What is a Node Selector?
+- A Node Selector is a simple way to constrain Pods to be scheduled only on Nodes that have specific labels. It's a mechanism to tell Kubernetes to run a Pod on a Node that matches certain criteria, based on the labels attached to the Node.
+
+26) what is demaon set.
+- A Kubernetes DaemonSet is a specialized type of controller that ensures a copy of a specific Pod runs on all (or a subset of) nodes in a cluster.
+- DaemonSets ensure that exactly one Pod of a given type runs on each node. If a new node is added to the cluster, the DaemonSet automatically schedules a new Pod on that node. Similarly, if a node is removed, the corresponding Pod is also removed.
+- Use Cases - Log Collection, Monitoring:
+
+27) what is satic pod.
+- static pod is a special type of pod that is managed directly by the kubelet on a specific node, rather than through the Kubernetes API server, which is the usual way that pods are managed.
+- Static pods are typically used for running critical components of the Kubernetes control plane itself, like the API server, etcd, or kube-scheduler. This ensures that these components can be started even if the API server is not available.
+
+28) Kubernetes Multiple Schedulers.
+- In Kubernetes, you typically have a default scheduler that is responsible for assigning pods to nodes based on a variety of factors like resource availability, taints, and affinity rules. However, Kubernetes also supports the use of multiple schedulers, allowing you to run custom or additional schedulers alongside the default one.
+
+29) Rollback Kubernetes Deployment.
+- Procedures for reverting to previous deployment versions if an upgrade introduces issues.
+- To rollback a deployment in Kubernetes, you can use the `kubectl rollout` command. 
+eg- For production env - You can add a manual trigger for rollback in the GitLab CI/CD pipeline UI. This would allow a team member to manually initiate a rollback if the automated checks missed something or if a rollback is needed for another reason.
+
+29) what is ConfigMap in Kubernetes.
+- A ConfigMap is a Kubernetes object used to store non-confidential data in key-value pairs
+- A ConfigMap is a Kubernetes object used to store non-confidential data in key-value pairs. It allows you to separate your configurations from your container images, making your applications easily portable and manageable. This separation is key to ensuring that your applications are easily scalable and maintainable.
+
+30) What is a Kubernetes Secret?
+- A Kubernetes Secret is an object that stores sensitive data, such as passwords, OAuth tokens, and SSH keys. By using Secrets, you can keep sensitive information separate from your application code, reducing the risk of exposure.
+- ways to Creating Kubernetes Secrets
+1- Creating a Secret from given Values in command
+# kubectl create secret generic my-secret --from-literal=username=my-user --from-literal=password=my-password
+2- Creating a Secret from a File
+3- Creating a Secret from Multiple Files
+4- Creating a Secret with YAML
+
+31) service in kubernets.
+- ClusterIP: By default, every Kubernetes service is assigned a ClusterIP, which is only accessible within the cluster.
+- NodePort: The NodePort service extends the ClusterIP service by mapping it to a specific port on each node in the cluster. This port, known as the NodePort, is chosen from a range (typically 30000–32767).
+- External Access: With NodePort, you can access your service from outside the cluster by hitting the NodeIP (any node in the cluster) at the assigned NodePort.
+
+
+32) kubernets ingress.
+-> Kubernetes Ingress is a resource that manages external access to services within a Kubernetes cluster, typically HTTP and HTTPS traffic. It provides a way to route requests to different services based on the request's host, path, or other attributes, acting as a powerful layer-7 load balancer.
+
+33) kubernets network policy.
+- Kubernetes Network Policies are a powerful feature that enables you to control the flow of network traffic to and from your applications running in a Kubernetes cluster. They act as a firewall for your applications, allowing you to specify which pods can communicate with each other and under what conditions. Network Policies help you segment your applications, improve security, and reduce the risk of unauthorized access or data breaches.
+- define with -Ingress and Egress
+
+34) what is StatefulSets.
+- StatefulSets are intended for stateful applications that require stable, persistent storage, stable network identities, and ordered deployment, scaling, and updates.
+- Used for databases (e.g., MySQL, PostgreSQL), distributed systems (e.g., Kafka, Zookeeper), or applications that require persistent storage and consistent network identifiers.
+
+35) Kubernetes Persistent Volume, Persistent Volume Claim, Static & Dynamic Provisioning & Storage Class.
+- Kubernetes provides a powerful storage management system that allows you to manage persistent data for your applications. Key components of this system include Persistent Volumes (PV), Persistent Volume Claims (PVC), Storage Classes, and the concepts of Static and Dynamic Provisioning.
+- 1. Persistent Volume (PV)
+Persistent Volume (PV) is a piece of storage in the cluster that has been provisioned by an administrator or dynamically created using a StorageClass. It’s a resource in the cluster just like a node is a cluster resource. PVs are independent of the lifecycle of the pod that uses the storage.
+- Access Modes: Define how the PV can be accessed by the pods. Common modes are:
+ReadWriteOnce (RWO): The volume can be mounted as read-write by a single node.
+ReadOnlyMany (ROX): The volume can be mounted as read-only by many nodes.
+ReadWriteMany (RWX): The volume can be mounted as read-write by many nodes.
+
+- 2-Persistent Volume Claim (PVC)
+Persistent Volume Claim (PVC) is a request for storage by a user. A PVC is bound to a specific PV and defines the amount of storage and access mode needed by a pod.
+- Binding: A PVC is bound to a PV that matches its requested resources (storage size and access mode).
+
+3. Storage Class
+Storage Class defines the type of storage (e.g., SSDs, HDDs, network-attached storage) and the provisioner that will be used to create the storage. It allows for dynamic provisioning of PVs, where the PVs are created on-demand as PVCs are requested.
+- Provisioner: The type of storage backend (e.g., AWS EBS, Google Cloud Persistent Disk, NFS) that will be used to dynamically provision a PV.
+
+-Static Provisioning is where an administrator manually creates PVs that are available for pods to use. These PVs are predefined and available for any PVC that matches the request.
+
+Use Case: Useful in environments where specific storage resources are pre-allocated or when using legacy systems without dynamic provisioning support.
+
+- Dynamic Provisioning allows for PVs to be automatically created based on PVC requests using a StorageClass. When a PVC is created that requests storage from a specific StorageClass, Kubernetes will automatically provision a PV that satisfies the request.
+
+Use Case: Useful in cloud environments or with modern storage systems where on-demand storage creation is supported.
+
+36) what is headless service.
+- Headless Service in Kubernetes
+A Headless Service in Kubernetes is a type of Service that does not provide load balancing or a single, stable IP address. Instead, it allows direct access to the individual pods backing the service. Headless Services are often used in conjunction with StatefulSets or for cases where you need to manage the load balancing yourself, such as when using a database or other stateful applications.
+
+37) what is sidecar.
+- Sidecar Pattern
+Sidecar is a design pattern where an additional container is deployed alongside the main application container within the same pod. The sidecar container augments or enhances the functionality of the main container without being directly coupled to it.
+-usecase - Logging and Monitoring,Proxying and Communication,Configuration and Secrets Management.
+
+38) what is Adapter Pattern?
+- Protocol Translation. adoptor Acts as a translator or converter, allowing the main application to interact with systems or protocols it wasn’t originally designed to handle.

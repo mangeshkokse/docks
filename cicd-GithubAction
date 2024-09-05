@@ -1,0 +1,152 @@
+name: Build and Deploy to Staging and Production
+
+on:
+  push:
+    branches:
+      - staging
+      - production
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ECR_URL: 059920143366.dkr.ecr.us-east-1.amazonaws.com  # Update with your specific AWS ECR URL
+  DOCKER_TLS_CERTDIR: ''  # Required for docker:dind setup within GitHub Actions
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      docker:
+        image: docker:19.03.12
+        options: --privileged  # Allows privileged mode for Docker in Docker
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3  # Pulls the latest code from the repo
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'  # Specifies Node.js version 16
+
+      - name: Install dependencies
+        uses: bahmutov/npm-install@v1  # Simplifies npm install process
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2  # AWS CLI configuration
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}  # Logs in to ECR
+
+      - name: Build react-dashboard
+        run: |
+          cd packages/react-dashboard
+          npm ci  # Installs clean dependencies
+          CI=false npm run build  # Builds the dashboard in non-CI mode
+
+      # Uncomment and adjust for additional services as needed
+      # - name: Build cubejs-dashboard-app
+      #   run: |
+      #     cd packages/cubejs-dashboard-app
+      #     npm ci
+      #     CI=false npm run build
+      
+      - name: Build api-graphql
+        run: |
+          cd packages/api-graphql
+          npm ci  # Installs dependencies
+          npm run build  # Builds the API
+          npm run test  # Runs tests
+          cp -r ./src/ui-kit-templates ./dist/  # Copies necessary templates
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_NAME_DEV="reactdashboard-dev"
+          IMAGE_NAME_PROD="reactdashboard-prod"
+          if [ "${{ github.ref_name }}" == "staging" ]; then
+            IMAGE_NAME=$IMAGE_NAME_DEV
+            TAG="staging-${{ github.run_number }}"  # Creates a staging tag
+          elif [ "${{ github.ref_name }}" == "production" ]; then
+            IMAGE_NAME=$IMAGE_NAME_PROD
+            TAG="prod-${{ github.run_number }}"  # Creates a production tag
+          fi
+          docker build --build-arg channel=${{ github.ref_name }} --build-arg CI_PIPELINE_ID=${{ github.run_number }} -f ./Dockerfile.dev -t $IMAGE_NAME .  # Builds the Docker image
+          docker tag $IMAGE_NAME ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG  # Tags the image
+          docker push ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG  # Pushes the image to ECR
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    env:
+      AWS_REGION: us-east-1
+      AWS_ECR_URL: 059920143366.dkr.ecr.us-east-1.amazonaws.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2  # Pulls the latest code
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1  # AWS CLI setup for deployment
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to the correct environment
+        uses: appleboy/ssh-action@master  # SSH action for remote deployment
+        with:
+          host: ${{ github.ref_name == 'staging' && secrets.EC2_HOST || secrets.EC2_HOST_PROD }}  # Chooses the correct host based on branch
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_PRIVATE_KEY }}
+          script: |
+            echo "AWS CLI version: $(aws --version)"
+            echo "Docker version: $(docker --version)"
+
+            # Configure AWS CLI on the remote EC2 instance
+            aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws configure set default.region ${{ env.AWS_REGION }}
+
+            # Stop and remove the previous container (if exists)
+            sudo docker stop visualization || true
+            sudo docker rm visualization || true
+
+            # Set the appropriate image name, tag, and pattern based on the branch
+            IMAGE_NAME="reactdashboard-dev"
+            IMAGE_TAG="staging-${{ github.run_number }}"
+            IMAGE_PATTERN="staging*"
+
+            if [ "${{ github.ref_name }}" == "production" ]; then
+              IMAGE_NAME="reactdashboard-prod"
+              IMAGE_TAG="prod-${{ github.run_number }}"
+              IMAGE_PATTERN="prod*"
+            fi
+
+            # Remove old Docker images that match the pattern for the current environment (staging or production)
+            sudo docker rmi -f $(sudo docker images -q '059920143366.dkr.ecr.us-east-1.amazonaws.com/'${IMAGE_NAME}:${IMAGE_PATTERN})
+
+            # Log in to ECR and pull the new image
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}
+            sudo docker pull ${{ env.AWS_ECR_URL }}/${IMAGE_NAME}:${IMAGE_TAG}
+
+            # Set the correct DB_HOST and DB_PASSWORD based on the branch
+            DB_HOST="${{ github.ref_name == 'staging' && secrets.DB_HOST || secrets.DB_HOST_PROD }}"
+            DB_PASSWORD="${{ github.ref_name == 'staging' && secrets.DB_PASSWORD || secrets.DB_PASSWORD_PROD }}"
+
+            # Run the new container
+            sudo docker run -d \
+              --name visualization \
+              --network host \
+              -p 80:81 \
+              -e DB_HOST="${DB_HOST}" \
+              -e DB_USER="${{ secrets.DB_USER }}" \
+              -e DB_PASSWORD="${DB_PASSWORD}" \
+              -e REDIS_HOST="localhost" \
+              -e REDIS_PORT="6379" \
+              ${{ env.AWS_ECR_URL }}/${IMAGE_NAME}:${IMAGE_TAG}

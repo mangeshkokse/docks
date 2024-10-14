@@ -648,4 +648,119 @@ In this example, the configuration automatically adjusts based on the selected w
 - Separate state files for each environment.
 
 ## Option 2: Separate State Files per Environment
+**How to Set Up Separate State Files**:
+1. **Backend Configuration**: In each environment's `main.tf` file, define a different backend configuration for each environment. If you're using `S3` as the backend:
+`In environments/prod/main.tf`:
+```hcl
+terraform {
+  backend "s3" {
+    bucket = "my-terraform-states"
+    key    = "prod/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "m5.large"
+  instance_count = 5
+}
+```
+In `environments/staging/main.tf`:
+```hcl
+terraform {
+  backend "s3" {
+    bucket = "my-terraform-states"
+    key    = "staging/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "t3.medium"
+  instance_count = 3
+}
+```
+In `environments/dev/main.tf`:
+```hcl
+terraform {
+  backend "s3" {
+    bucket = "my-terraform-states"
+    key    = "dev/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "t3.small"
+  instance_count = 1
+}
+```
+2. **Terraform Apply**: Each environment can be managed independently:
+```bash
+cd environments/prod
+terraform init
+terraform apply
+```
+## 3. Environment-Specific Variable Files
+Another way to manage environment-specific configurations is to use Terraform variable files. You can define different .tfvars files for each environment and pass them during the Terraform apply process.
+
+Example of Environment-Specific Variable Files:
+- `prod.tfvars`:
+```hcl
+instance_type  = "m5.large"
+instance_count = 5
+```
+- `staging.tfvars`:
+```hcl
+instance_type  = "t3.medium"
+instance_count = 3
+```
+- `dev.tfvars`:
+```hcl
+instance_type  = "t3.small"
+instance_count = 1
+```
+You can apply them using:
+```bash
+terraform apply -var-file="prod.tfvars"
+```
+### 4. Backend State Locking
+If you’re using a remote backend (e.g., S3 with DynamoDB), enable state locking to prevent concurrent Terraform operations that could corrupt the state file.
+In an S3 backend configuration, you can enable state locking with **DynamoDB**:  
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "my-terraform-states"
+    key            = "prod/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
+## Summary of Steps:
+1. **Modules**: Use Terraform modules to encapsulate reusable infrastructure code, allowing you to define similar services with environment-specific variables.
+2. **Workspaces or Separate State Files**:
+   - **Workspaces**: Manage environments within the same Terraform configuration using different workspaces (isolated state per environment).
+   - **Separate State Files**: Store state files in different backends (e.g., S3) for each environment.
+3. **Variable Files**: Use tfvars files for environment-specific configurations, such as instance types and counts.
+4. **Backend State Locking**: Use DynamoDB (or a similar mechanism) for state locking when using remote backends to avoid concurrent modifications.
+This approach ensures that each environment remains independent, configurations are modular and maintainable, and state is managed effectively across environments.
+
+# AWS (Route-53)
+# Q. Suppose you have a system with an apex domain abc.com and multiple environments such as dev.abc.com and prod.abc.com. Additionally, there are multiple subdomains for each environment, such as api.dev.abc.com. How would you structure this kind of system in Route 53?
+
+To structure a system with an apex domain (e.g., `abc.com`) and multiple environments (e.g., `dev.abc.com`, `prod.abc.com`), as well as subdomains for each environment (e.g., `api.dev.abc.com`), you can use Amazon Route 53 to manage DNS routing. The goal is to ensure a scalable and manageable DNS setup, where each environment and subdomain is properly routed to its corresponding service or infrastructure.
+
+Here’s how you can structure this system in Route 53:
+
+### 1. Hosted Zones for the Apex Domain and Subdomains
+- **Apex Domain** `(abc.com)`: Create a public hosted zone for the apex domain `(abc.com)`. This will be the parent zone where you'll manage DNS records for `abc.com` and delegate authority to subdomains like `dev.abc.com` and `prod.abc.com`.
+- Environment Subdomains (`dev.abc.com`, `prod.abc.com`): You can either:
+  - **Option 1**: Manage all subdomains and sub-environments directly in the same hosted zone (`abc.com`), or
+  - **Option 2**: Create separate hosted zones for each environment subdomain (`dev.abc.com`, `prod.abc.com`), which can simplify management and delegation, especially for larger systems.
+
+## Option 1: Single Hosted Zone for `abc.com` (Managing All Subdomains)    
 

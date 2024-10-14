@@ -763,4 +763,90 @@ Here’s how you can structure this system in Route 53:
   - **Option 2**: Create separate hosted zones for each environment subdomain (`dev.abc.com`, `prod.abc.com`), which can simplify management and delegation, especially for larger systems.
 
 ## Option 1: Single Hosted Zone for `abc.com` (Managing All Subdomains)    
+In this setup, you would create DNS records for all subdomains within the same `abc.com` hosted zone.
+- Hosted Zone: abc.com
+  - `A` Record or `CNAME` for `abc.com` (apex domain).
+  - `CNAME` or `A` records for `dev.abc.com` and `prod.abc.com`.
+  - Subdomain-specific records like `api.dev.abc.com`, `api.prod.abc.com`, etc.
+
+**Example DNS records in the abc.com hosted zone**:
+- **Apex Domain `(abc.com)`**:
+   - `A` or `CNAME` record pointing to your main application load balancer or server (e.g., `A` record -> ELB DNS name or IP).
+- **Environment Subdomains (dev.abc.com and prod.abc.com)**:
+   - `dev.abc.com` -> `A` record or `CNAME` pointing to the load balancer or server handling the dev environment.
+   - `prod.abc.com` -> `A` record or `CNAME` pointing to the load balancer or server handling the prod environment.
+- **Service Subdomains (`api.dev.abc.com`, `api.prod.abc.com`)**:
+   - `api.dev.abc.com` -> `A` or `CNAME` record pointing to the API service in the dev environment.
+   - `api.prod.abc.com` -> `A` or `CNAME` record pointing to the API service in the prod environment.
+```plaintext
+abc.com        -> A record or CNAME (points to ELB or main server for abc.com)
+dev.abc.com    -> A record or CNAME (points to dev ELB or server)
+prod.abc.com   -> A record or CNAME (points to prod ELB or server)
+api.dev.abc.com  -> A record or CNAME (points to dev API ELB or server)
+api.prod.abc.com -> A record or CNAME (points to prod API ELB or server)
+```
+
+## Option 2: Separate Hosted Zones for Each Subdomain (`dev.abc.com`, `prod.abc.com`)
+In this option, you can create separate hosted zones for each environment (`dev.abc.com `and `prod.abc.com`). This approach is useful if you want to isolate DNS management for each environment or delegate control of DNS for each subdomain to different teams.
+**Step-by-Step**:
+- **Parent Hosted Zone (`abc.com`)**:
+    - Create a public hosted zone for `abc.com`.
+    - In this hosted zone, you will create NS records to delegate DNS management to the subdomain's hosted zones.
+Example DNS records in `abc.com` hosted zone:
+```plaintext
+abc.com        -> A record or CNAME (points to apex load balancer)
+dev.abc.com    -> NS record (delegates DNS control to the `dev.abc.com` hosted zone)
+prod.abc.com   -> NS record (delegates DNS control to the `prod.abc.com` hosted zone)
+```
+- **Environment Subdomain Hosted Zones**:
+  - Create a separate hosted zone for each environment (`dev.abc.com`, `prod.abc.com`).
+  - Manage environment-specific DNS records in each hosted zone.
+Example DNS records in `dev.abc.com` hosted zone:
+```plaintext
+dev.abc.com    -> A record or CNAME (points to dev environment load balancer)
+api.dev.abc.com  -> A record or CNAME (points to dev API service)
+```
+Example DNS records in `prod.abc.com` hosted zone:
+```plaintext
+prod.abc.com   -> A record or CNAME (points to prod environment load balancer)
+api.prod.abc.com -> A record or CNAME (points to prod API service)
+```
+### Advantages of Separate Hosted Zones:
+- **Delegation**: You can delegate DNS management for specific environments to different teams or services.
+- **Separation**: Each environment can be managed independently, reducing the risk of DNS misconfigurations affecting other environments.
+
+### 2. Routing and Health Checks
+- **Load Balancer Integration**: Each subdomain (e.g., `dev.abc.com`, `api.dev.abc.com`) can point to different load balancers or services in AWS, such as an Elastic Load Balancer (ELB), CloudFront Distribution, or direct EC2 instances.
+- **Health Checks and Failover**:
+  - You can set up Route 53 health checks for your DNS records to automatically remove unhealthy endpoints from your DNS routing.
+  - For example, set up a health check for the `api.prod.abc.com` DNS record to monitor the health of the API in production. If the API fails, Route 53 can failover to a backup endpoint or show an error page.
+
+### 3. Using Weighted Routing for Canary or Blue-Green Deployments
+For environments like `dev.abc.com` and `prod.abc.com`, you might want to implement canary deployments or blue-green deployments to gradually shift traffic between versions of your application.
+- **Weighted Routing**: Use `Route 53’s weighted routing policy to route a percentage of traffic to different versions of your service.
+  - Example: You can route 90% of traffic to the stable version `(prod-v1)`, and 10% to the new version `(prod-v2)` using weighted DNS records.  
+Example DNS setup for weighted routing:
+```plaintext
+prod.abc.com -> 90% traffic -> ELB for prod-v1 (A or CNAME record)
+prod.abc.com -> 10% traffic -> ELB for prod-v2 (A or CNAME record)
+```
+This allows you to slowly shift traffic from one environment or version to another for a smooth transition.
+
+### 4. SSL/TLS Certificates
+To secure traffic for your apex domain and subdomains, you can use AWS Certificate Manager (ACM) to provision SSL/TLS certificates:
+- For the apex domain `(abc.com)` and wildcard subdomains `(*.abc.com)`, request a wildcard SSL certificate `(*.abc.com)`.
+- If you need more control over specific subdomains, you can request individual certificates for each subdomain (`api.dev.abc.com`, `api.prod.abc.com`, etc.).
+
+## Summary of DNS Structure in Route 53
+1. **Hosted Zones**:
+- Either use a single hosted zone for `abc.com` and manage all subdomains (`dev.abc.com`, `prod.abc.com`, etc.) within that zone, or create separate hosted zones for each subdomain (`dev.abc.com`, `prod.abc.com`) for better isolation.
+2. **DNS Records**:
+- Use `A` records or CNAME records to map subdomains (`api.dev.abc.com`, `api.prod.abc.com`) to corresponding infrastructure (e.g., load balancers, EC2 instances).
+3. **Routing**:
+- Implement weighted routing for gradual traffic shifts between environments (e.g., canary deployments).
+- Use health checks to ensure failover if a service goes down.
+4. **SSL/TLS Certificates:**
+- Secure all domains and subdomains with ACM certificates (wildcard or specific).
+
+By using this structure, you can efficiently manage a scalable DNS setup in Route 53, providing both flexibility and isolation for your environments and subdomains.
 

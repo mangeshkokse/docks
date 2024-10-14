@@ -1,3 +1,4 @@
+# Kubernets
 # Q. Suppose you have an application deployed inside EKS, and your application needs some secrets to run. These secrets are stored in the Secrets Manager service in AWS. How will you provision this so that your application can access those secrets and configurations?
 
 To provision your application deployed inside Amazon EKS to access secrets from AWS Secrets Manager, you can follow these steps:
@@ -293,3 +294,358 @@ spec:
 For disaster recovery, ensure that your backup data is stored in a separate region or availability zone. In the event of a failure, you should have a process for restoring data from backups.
 
 ## Summary of Key Steps
+1. **StatefulSet**: Use StatefulSet for stable pod identities and persistent storage.
+2. **Persistent Storage**: Use highly available storage solutions.
+3. **Database Replication**: Set up replication and failover using database-native HA features like Patroni, MySQL Group Replication, or Redis Sentinel.
+4. **Service Configuration**: Use headless services for pod-to-pod communication and separate services for master and replica traffic.
+5. **Pod Anti-Affinity**: Spread database pods across multiple nodes and availability zones.
+6. **Health Checks**: Configure liveness and readiness probes for automatic restarts.
+7. **Monitoring**: Monitor performance, replication lag, and other key metrics with Prometheus and Grafana.
+8. **Backups**: Set up automated backups using CronJobs and store them externally.
+9. **Disaster Recovery**: Ensure your backup data is stored across multiple regions for disaster recovery.
+
+# Q. Suppose you have a situation where your database needs to run on a specific node in Kubernetes and be highly available. How would you achieve that?
+To ensure your database runs on a specific node in Kubernetes while maintaining high availability (HA), you need to use node affinity, tolerations, and advanced scheduling techniques, along with proper high availability setup for the database itself. Here’s a step-by-step strategy to achieve this:
+
+### 1. Use Node Affinity for Database Pods
+Node affinity allows you to specify rules to control which nodes your pods will run on. You can use this to "pin" your database to specific nodes.
+
+Here’s how you can configure node affinity for your database StatefulSet:
+**Example of Node Affinity in a StatefulSet**:
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  replicas: 3
+  serviceName: "postgres"
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - <specific-node-name>
+      containers:
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+In this example:
+- The `nodeAffinity` ensures that the pods only run on nodes with a specific label. For example, the key `kubernetes.io/hostname` matches a specific node name.
+
+### 2. Use Taints and Tolerations
+If the node you want to run your database on is dedicated for specific workloads, you can add a taint to that node and configure a toleration for your database pods. This ensures that only certain pods can be scheduled on this node.
+Example of Adding a Taint to a Node:
+```bash
+# Add a taint to the node, e.g., for dedicated database workloads
+kubectl taint nodes <specific-node-name> db-only=true:NoSchedule
+```
+Example of a Toleration in the StatefulSet:
+```yaml
+spec:
+  template:
+    spec:
+      tolerations:
+      - key: "db-only"
+        operator: "Exists"
+        effect: "NoSchedule"
+```
+This ensures that only the pods with the corresponding toleration can be scheduled on the nodes with the `db-only` taint.
+
+### 3. Ensure Persistent Storage (PersistentVolumeClaims)
+Since the database is stateful, you must ensure the data is stored persistently and can survive pod restarts or failures. Use PersistentVolumeClaims (PVCs) for storage, ensuring that they are bound to the correct node.
+
+**Use Local Persistent Volumes**:
+To ensure the database always runs on the specific node and can access the same storage, you can use **local PersistentVolumes (PVs)**.
+Example of a local PersistentVolume on a specific node:
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /mnt/disks/postgres-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - <specific-node-name>
+```
+This binds the volume to a specific path on a specific node.
+
+In your StatefulSet, you can refer to the PersistentVolumeClaim:
+```yaml
+volumeClaimTemplates:
+- metadata:
+    name: postgres-data
+  spec:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 100Gi
+```
+### 4. Replication and Failover (High Availability)
+To maintain high availability, even when the database is "pinned" to a specific node, you need to set up database-level replication and failover across multiple nodes:
+- **PostgreSQL**: Use Streaming Replication or Patroni for leader election and failover.
+- **MySQL**: Use MySQL InnoDB Cluster or Galera Cluster for multi-node replication.
+- **MongoDB**: Use Replica Sets with automatic failover.
+- **Redis**: Use Redis Sentinel or Redis Cluster for high availability.
+
+For example, in a PostgreSQL deployment using Patroni, you would still apply node affinity to ensure each database replica runs on specific nodes, but the master and replicas would be distributed across different nodes to avoid a single point of failure.
+Example of StatefulSet with Patroni for HA:
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: patroni
+spec:
+  serviceName: patroni
+  replicas: 3
+  selector:
+    matchLabels:
+      app: patroni
+  template:
+    metadata:
+      labels:
+        app: patroni
+    spec:
+      containers:
+      - name: patroni
+        image: zalando/patroni:latest
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - <specific-node-name>  # This ensures each replica runs on a different node
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+```
+### 5. Pod Anti-Affinity for High Availability
+To avoid having all database replicas scheduled on the same node, you can use Pod Anti-Affinity. This prevents Kubernetes from placing multiple replicas of the same StatefulSet on the same node.
+Example of Pod Anti-Affinity:
+```yaml
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values:
+          - postgres
+      topologyKey: "kubernetes.io/hostname"
+```
+This configuration ensures that each replica of the database runs on a different node, ensuring high availability.
+
+### 6. Monitoring and Health Checks
+To ensure the database remains highly available and healthy:
+- Use Liveness and Readiness Probes to automatically restart unhealthy pods.
+- Implement monitoring with tools like Prometheus and Grafana to track the health of your database and underlying nodes.
+
+Example of a readiness probe for PostgreSQL:
+```yaml
+readinessProbe:
+  exec:
+    command:
+    - pg_isready
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+### 7. Backup and Recovery
+Ensure you have a robust backup strategy, especially when tying your database to a specific node. You can use Kubernetes CronJobs to schedule backups, and store backups in external storage (e.g., AWS S3, Google Cloud Storage) for disaster recovery.
+
+Summary of Key Steps:
+
+Summary of Key Steps:
+1. **Node Affinity**: Use node affinity to "pin" your database to a specific node.
+2. **Taints and Tolerations**: Use taints to ensure only specific workloads (like your database) run on certain nodes.
+3. **Local Persistent Volumes**: Use local PersistentVolumes to ensure the database can always access the same storage.
+4. **Replication and Failover**: Implement database replication (e.g., PostgreSQL Streaming Replication, Redis Sentinel) to ensure HA.
+5. **Pod Anti-Affinity**: Ensure pods are scheduled across different nodes for redundancy.
+6. **Health Checks and Monitoring**: Use Kubernetes probes and monitoring tools to maintain availability.
+7. **Backup and Disaster Recovery**: Regularly back up your database and store backups externally.
+This approach allows you to run your database on a specific node while maintaining high availability by distributing replicas across different nodes and ensuring proper failover mechanisms.
+
+# Terraform
+
+# Q. Suppose you have a situation where you have three environments: prod, staging, and dev. All of these environments have similar services; the only difference is the specifications of these services. For example, development has lower-spec machines compared to production. How would you manage this kind of infrastructure using Terraform, and how would you manage the state file?
+
+To manage environments like prod, staging, and dev in a Terraform-based infrastructure setup, where the services are similar but have different specifications (e.g., machine sizes, instance counts, etc.), you can use a combination of Terraform features such as workspaces, modules, and variables. Additionally, managing the Terraform state effectively is crucial for ensuring isolated and organized infrastructure management.
+
+### 1. Use Modules to Reuse Common Infrastructure Code
+Since all three environments (prod, staging, dev) share a similar structure, you can encapsulate the shared infrastructure configuration into Terraform modules. Modules allow you to define reusable configurations and pass specific variables for each environment (e.g., instance size, count).
+
+Here’s an example structure using modules:
+```bash
+├── environments
+│   ├── prod
+│   │   └── main.tf
+│   ├── staging
+│   │   └── main.tf
+│   └── dev
+│       └── main.tf
+└── modules
+    └── app
+        ├── main.tf
+        ├── outputs.tf
+        └── variables.tf
+```
+`modules/app/main.tf`:
+Define your infrastructure in a module for a service that is shared across environments (e.g., an EC2 instance):
+```hcl
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+}
+
+variable "instance_count" {
+  description = "Number of EC2 instances"
+  type        = number
+}
+
+resource "aws_instance" "app" {
+  count         = var.instance_count
+  instance_type = var.instance_type
+  ami           = "ami-0c55b159cbfafe1f0" # Example AMI ID
+  tags = {
+    Name = "AppInstance-${var.instance_type}"
+  }
+}
+
+output "instance_ids" {
+  value = aws_instance.app[*].id
+}
+```
+`environments/prod/main.tf`:
+In each environment’s directory, you can define environment-specific configurations by calling the module and passing the appropriate variables:
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "m5.large"
+  instance_count = 5
+}
+```
+`environments/staging/main.tf`:
+For staging, you might use smaller instances or fewer instances:
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "t3.medium"
+  instance_count = 3
+}
+```
+`environments/dev/main.tf`:
+For dev, you use even lower-spec machines:
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = "t3.small"
+  instance_count = 1
+}
+```
+
+### 2. Use Workspaces or Separate State Files for Each Environment
+To manage Terraform state effectively, you have two primary options: Terraform workspaces or using separate state files for each environment. This ensures that the state of one environment does not interfere with the others.
+## Option 1: Using Terraform Workspaces
+Terraform workspaces allow you to manage multiple environments within the same configuration, while keeping separate state files for each workspace.
+### How to Set Up Workspaces:
+1. **Initialize Terraform**
+```bash
+terraform init
+```
+2. **Create Workspaces**: You can create different workspaces for `prod`, `staging`, and `dev`:
+```bash
+terraform workspace new prod
+terraform workspace new staging
+terraform workspace new dev
+```
+3. **Switch Between Workspaces**:
+```bash
+terraform workspace select dev
+terraform apply
+```
+4. **Access Workspace in Configuration**: You can use the workspace name to differentiate configurations in the same files:
+```hcl
+variable "instance_type" {
+  type    = string
+  default = {
+    prod    = "m5.large"
+    staging = "t3.medium"
+    dev     = "t3.small"
+  }
+}
+
+module "app" {
+  source         = "../../modules/app"
+  instance_type  = var.instance_type[terraform.workspace]
+  instance_count = terraform.workspace == "prod" ? 5 : (terraform.workspace == "staging" ? 3 : 1)
+}
+```
+In this example, the configuration automatically adjusts based on the selected workspace.
+**Advantages of Using Workspaces**:
+- Easy to manage multiple environments from the same directory.
+- Separate state files for each environment.
+
+## Option 2: Separate State Files per Environment
+

@@ -8,8 +8,8 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  AWS_ECR_URL: 059920143366.dkr.ecr.us-east-1.amazonaws.com  # Update with your specific AWS ECR URL
-  DOCKER_TLS_CERTDIR: ''  # Required for docker:dind setup within GitHub Actions
+  AWS_ECR_URL: 059920143366.dkr.ecr.us-east-1.amazonaws.com
+  DOCKER_TLS_CERTDIR: ''
 
 jobs:
   build:
@@ -18,22 +18,30 @@ jobs:
     services:
       docker:
         image: docker:19.03.12
-        options: --privileged  # Allows privileged mode for Docker in Docker
+        options: --privileged
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3  # Pulls the latest code from the repo
+        uses: actions/checkout@v3
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'  # Specifies Node.js version 16
+          node-version: '16'
 
       - name: Install dependencies
-        uses: bahmutov/npm-install@v1  # Simplifies npm install process
+        uses: bahmutov/npm-install@v1
 
       - name: Set up AWS CLI
-        uses: aws-actions/configure-aws-credentials@v2  # AWS CLI configuration
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -41,28 +49,29 @@ jobs:
 
       - name: Log in to Amazon ECR
         run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}  # Logs in to ECR
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}
 
       - name: Build react-dashboard
         run: |
           cd packages/react-dashboard
-          npm ci  # Installs clean dependencies
-          CI=false npm run build  # Builds the dashboard in non-CI mode
+          npm ci
+          CI=false npm run build
 
-      # Uncomment and adjust for additional services as needed
-      # - name: Build cubejs-dashboard-app
-      #   run: |
-      #     cd packages/cubejs-dashboard-app
-      #     npm ci
-      #     CI=false npm run build
-      
       - name: Build api-graphql
         run: |
           cd packages/api-graphql
-          npm ci  # Installs dependencies
-          npm run build  # Builds the API
-          npm run test  # Runs tests
-          cp -r ./src/ui-kit-templates ./dist/  # Copies necessary templates
+          npm ci
+          npm run build
+          npm run test
+          cp -r ./src/ui-kit-templates ./dist/
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.docker-cache
+          key: ${{ runner.os }}-docker-${{ hashFiles('Dockerfile.dev') }}
+          restore-keys: |
+            ${{ runner.os }}-docker-
 
       - name: Build and push Docker image
         run: |
@@ -70,83 +79,134 @@ jobs:
           IMAGE_NAME_PROD="reactdashboard-prod"
           if [ "${{ github.ref_name }}" == "staging" ]; then
             IMAGE_NAME=$IMAGE_NAME_DEV
-            TAG="staging-${{ github.run_number }}"  # Creates a staging tag
+            TAG="staging-${{ github.run_number }}"
           elif [ "${{ github.ref_name }}" == "production" ]; then
             IMAGE_NAME=$IMAGE_NAME_PROD
-            TAG="prod-${{ github.run_number }}"  # Creates a production tag
+            TAG="prod-${{ github.run_number }}"
           fi
-          docker build --build-arg channel=${{ github.ref_name }} --build-arg CI_PIPELINE_ID=${{ github.run_number }} -f ./Dockerfile.dev -t $IMAGE_NAME .  # Builds the Docker image
-          docker tag $IMAGE_NAME ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG  # Tags the image
-          docker push ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG  # Pushes the image to ECR
+          docker build --build-arg channel=${{ github.ref_name }} --build-arg CI_PIPELINE_ID=${{ github.run_number }} -f ./Dockerfile.dev -t $IMAGE_NAME .
+          docker tag $IMAGE_NAME ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG
+          docker push ${{ env.AWS_ECR_URL }}/$IMAGE_NAME:$TAG
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          
+      - name: Update Service Version (Staging Only)
+        if: github.ref == 'refs/heads/staging' # Run this step only for staging branch
+        run: |
+            export SERVICE_NAME=dashboard
+            export DOCKER_IMAGE_NAME=059920143366.dkr.ecr.us-east-1.amazonaws.com/reactdashboard-dev:$TAG
+            curl --user project283:nuhg7jeakzdhw6xd \
+            --data-urlencode "projectId=283" \
+            --data-urlencode "title=$CI_COMMIT_TITLE" \
+            --data-urlencode "message=$CI_COMMIT_MESSAGE" \
+            "https://acris.unifie.cloud/versions/update?channel=Prod&name=$CI_COMMIT_BRANCH&build=$CI_PIPELINE_ID&image=$SERVICE_NAME&url=$DOCKER_IMAGE_NAME"
+         
 
-  deploy:
+  deploy-staging:
     runs-on: ubuntu-latest
+    if: github.ref_name == 'staging'
     needs: build
-
     env:
-      AWS_REGION: us-east-1
-      AWS_ECR_URL: 059920143366.dkr.ecr.us-east-1.amazonaws.com
+      IMAGE_NAME: reactdashboard-dev
+      IMAGE_TAG: staging-${{ github.run_number }}
+      IMAGE_PATTERN: "staging*"
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2  # Pulls the latest code
-
       - name: Set up AWS CLI
-        uses: aws-actions/configure-aws-credentials@v1  # AWS CLI setup for deployment
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: "us-east-1"
 
-      - name: Deploy to the correct environment
-        uses: appleboy/ssh-action@master  # SSH action for remote deployment
+      - name: Deploy to Staging Environment
+        uses: appleboy/ssh-action@master
         with:
-          host: ${{ github.ref_name == 'staging' && secrets.EC2_HOST || secrets.EC2_HOST_PROD }}  # Chooses the correct host based on branch
+          host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_PRIVATE_KEY }}
           script: |
-            echo "AWS CLI version: $(aws --version)"
-            echo "Docker version: $(docker --version)"
-
-            # Configure AWS CLI on the remote EC2 instance
             aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
             aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
             aws configure set default.region ${{ env.AWS_REGION }}
 
-            # Stop and remove the previous container (if exists)
             sudo docker stop visualization || true
             sudo docker rm visualization || true
-
-            # Set the appropriate image name, tag, and pattern based on the branch
-            IMAGE_NAME="reactdashboard-dev"
-            IMAGE_TAG="staging-${{ github.run_number }}"
-            IMAGE_PATTERN="staging*"
-
-            if [ "${{ github.ref_name }}" == "production" ]; then
-              IMAGE_NAME="reactdashboard-prod"
-              IMAGE_TAG="prod-${{ github.run_number }}"
-              IMAGE_PATTERN="prod*"
-            fi
-
-            # Remove old Docker images that match the pattern for the current environment (staging or production)
-            sudo docker rmi -f $(sudo docker images -q '059920143366.dkr.ecr.us-east-1.amazonaws.com/'${IMAGE_NAME}:${IMAGE_PATTERN})
-
-            # Log in to ECR and pull the new image
+            sudo docker rmi -f $(sudo docker images -q '${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_PATTERN }}')
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}
-            sudo docker pull ${{ env.AWS_ECR_URL }}/${IMAGE_NAME}:${IMAGE_TAG}
+            sudo docker pull ${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-            # Set the correct DB_HOST and DB_PASSWORD based on the branch
-            DB_HOST="${{ github.ref_name == 'staging' && secrets.DB_HOST || secrets.DB_HOST_PROD }}"
-            DB_PASSWORD="${{ github.ref_name == 'staging' && secrets.DB_PASSWORD || secrets.DB_PASSWORD_PROD }}"
-
-            # Run the new container
             sudo docker run -d \
               --name visualization \
               --network host \
               -p 80:81 \
-              -e DB_HOST="${DB_HOST}" \
+              -e DB_HOST="${{ env.DB_HOST }}" \
               -e DB_USER="${{ secrets.DB_USER }}" \
-              -e DB_PASSWORD="${DB_PASSWORD}" \
+              -e DB_PASSWORD="${{ env.DB_PASSWORD }}" \
+              -e DASHBOARD_SERVICE_HOST="react-test.nanoheal.work" \
+              -e DASHBOARD_wsurl="wss://react-testnode.nanoheal.work:443/hfnws" \
+              -e API_AppKey="GfmdPDkAsS8R3xm8RRnpSwXHxkfYVj6Ho" \
+              -e API_SecKey="36JydVSbpjqeMA7abgjZVJ2vBHW25npT"  \
+              -e APP_SECRET_KEY="6d912ax7eefb1fd69e5ddffd55"  \
+              -e PUBSUB_NODE="https://react-testnode.nanoheal.work" \
               -e REDIS_HOST="localhost" \
               -e REDIS_PORT="6379" \
-              ${{ env.AWS_ECR_URL }}/${IMAGE_NAME}:${IMAGE_TAG}
+              -e REDIS_PASSWORD="YourManualPasswordHere" \
+              ${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    if: github.ref_name == 'production'
+    needs: build
+    env:
+      IMAGE_NAME: reactdashboard-prod
+      IMAGE_TAG: prod-${{ github.run_number }}
+      IMAGE_PATTERN: "prod*"
+      DB_HOST: "demo-hasura-db.cyq2mv6upiup.us-east-2.rds.amazonaws.com"
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD_PROD }}
+      DB_USER: "weblog"
+
+    steps:
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "us-west-1"
+
+      - name: Deploy to Production Environment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST_PROD }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_PRIVATE_KEY_PROD }}
+          script: |
+            aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws configure set default.region ${{ env.AWS_REGION }}
+
+            sudo docker stop visualization || true
+            sudo docker rm visualization || true
+            sudo docker rmi -f $(sudo docker images -q '${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_PATTERN }}')
+            aws ecr get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin ${{ env.AWS_ECR_URL }}
+            sudo docker pull ${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+            sudo docker run -d \
+              --name visualization \
+              --network host \
+              -p 80:81 \
+              -e DB_HOST="demo-hasura-db.cyq2mv6upiup.us-east-2.rds.amazonaws.com" \
+              -e DB_USERNAME="weblog" \
+              -e DB_PASSWORD="b6Q4qT17xyfYJS9CJP2019#" \
+              -e DASHBOARD_SERVICE_HOST="demo.nanoheal.work" \
+              -e DASHBOARD_wsurl="wss://demonode.nanoheal.work:443/hfnws" \
+              -e API_AppKey="GfmdPDkAsS8R3xm8RRnpSwXHxkfYVj6Ho" \
+              -e API_SecKey="36JydVSbpjqeMA7abgjZVJ2vBHW25npT"  \
+              -e APP_SECRET_KEY="6d912ax7eefb1fd69e5ddffd55"  \
+              -e REDIS_HOST="localhost" \
+              -e REDIS_PORT="6379" \
+              -e REDIS_PASSWORD="YourManualPasswordHere" \
+              -e GRAPHQL_API_DOMAIN="http://demo.nanoheal.work" \
+              -e PUBSUB_NODE="https://demonode.nanoheal.work" \
+              ${{ env.AWS_ECR_URL }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
